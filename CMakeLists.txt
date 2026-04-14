@@ -127,20 +127,15 @@ foreach(target_name IN LISTS UVC_TARGETS)
       PUBLIC_HEADER "include/libuvc/libuvc.h;${CMAKE_CURRENT_BINARY_DIR}/include/libuvc/libuvc_config.h"
   )
   if(ENABLE_UVC_DEBUGGING)
-    target_compile_definitions(${target_name}
-      PRIVATE
-        UVC_DEBUGGING
-    )
-    find_library(
-            log-lib
-            log
-    )
-    target_link_libraries(
-            ${target_name}
-            PRIVATE
-            ${log-lib}
-    )
+  target_compile_definitions(${target_name}
+    PRIVATE
+      UVC_DEBUGGING
+  )
+  if(ANDROID)
+    find_library(log-lib log)
+    target_link_libraries(${target_name} PRIVATE ${log-lib})
   endif()
+endif()
 endforeach()
 
 if(BUILD_EXAMPLE)
@@ -168,6 +163,7 @@ if(BUILD_TEST)
       LibUVC::UVC
       opencv_core
       opencv_highgui
+      m
   )
 endif()
 

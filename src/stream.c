@@ -196,13 +196,15 @@ uvc_error_t uvc_query_stream_ctrl(
     uvc_stream_ctrl_t *ctrl,
     uint8_t probe,
     enum uvc_req_code req) {
-  uint8_t buf[34];
+  uint8_t buf[48];
   size_t len;
   uvc_error_t err;
 
   memset(buf, 0, sizeof(buf));
 
-  if (devh->info->ctrl_if.bcdUVC >= 0x0110)
+  if (devh->info->ctrl_if.bcdUVC >= 0x0150)
+    len = 48;
+  else if (devh->info->ctrl_if.bcdUVC >= 0x0110)
     len = 34;
   else
     len = 26;
@@ -221,13 +223,25 @@ uvc_error_t uvc_query_stream_ctrl(
     INT_TO_DW(ctrl->dwMaxVideoFrameSize, buf + 18);
     INT_TO_DW(ctrl->dwMaxPayloadTransferSize, buf + 22);
 
-    if (len == 34) {
+    if (len >= 34) {
       INT_TO_DW ( ctrl->dwClockFrequency, buf + 26 );
       buf[30] = ctrl->bmFramingInfo;
       buf[31] = ctrl->bPreferredVersion;
       buf[32] = ctrl->bMinVersion;
       buf[33] = ctrl->bMaxVersion;
       /** @todo support UVC 1.1 */
+    }
+    if (len == 48) {
+      buf[34] = ctrl->bUsage;
+      buf[35] = ctrl->bBitDepthLuma;
+      buf[36] = ctrl->bmSettings;      
+      buf[37] = ctrl->bMaxNumberOfRefFramesPlus1;
+      SHORT_TO_SW(ctrl->bmRateControlModes, buf + 38);
+      SHORT_TO_SW(ctrl->bmLayoutPerStream[0], buf + 40);
+      SHORT_TO_SW(ctrl->bmLayoutPerStream[1], buf + 42);
+      SHORT_TO_SW(ctrl->bmLayoutPerStream[2], buf + 44);
+      SHORT_TO_SW(ctrl->bmLayoutPerStream[3], buf + 46);      
+      /** @todo support UVC 1.5 */
     }
   }
 
@@ -259,7 +273,7 @@ uvc_error_t uvc_query_stream_ctrl(
     ctrl->dwMaxVideoFrameSize = DW_TO_INT(buf + 18);
     ctrl->dwMaxPayloadTransferSize = DW_TO_INT(buf + 22);
 
-    if (len == 34) {
+    if (len >= 34) {
       ctrl->dwClockFrequency = DW_TO_INT ( buf + 26 );
       ctrl->bmFramingInfo = buf[30];
       ctrl->bPreferredVersion = buf[31];
@@ -277,6 +291,30 @@ uvc_error_t uvc_query_stream_ctrl(
       if (frame) {
         ctrl->dwMaxVideoFrameSize = frame->dwMaxVideoFrameBufferSize;
       }
+    }
+    if (len == 48) {
+      ctrl->bUsage = buf[34];
+      ctrl->bBitDepthLuma = buf[35];
+      ctrl->bmSettings = buf[36];      
+      ctrl->bMaxNumberOfRefFramesPlus1 = buf[37];
+      ctrl->bmRateControlModes = SW_TO_SHORT(buf + 38);
+      ctrl->bmLayoutPerStream[0] =  SW_TO_SHORT(buf + 40);
+      ctrl->bmLayoutPerStream[1] =  SW_TO_SHORT(buf + 42);
+      ctrl->bmLayoutPerStream[2] =  SW_TO_SHORT(buf + 44);
+      ctrl->bmLayoutPerStream[3] =  SW_TO_SHORT(buf + 46);      
+      /** @todo support UVC 1.5 */
+    }
+    else {
+      ctrl->bUsage = 0x00;
+      ctrl->bBitDepthLuma = 0x00;
+      ctrl->bmSettings = 0x00;      
+      ctrl->bMaxNumberOfRefFramesPlus1 = '0';
+      ctrl->bmRateControlModes = 0x0000;
+      ctrl->bmLayoutPerStream[0] =  0x0000;
+      ctrl->bmLayoutPerStream[1] =  0x0000;
+      ctrl->bmLayoutPerStream[2] =  0x0000;
+      ctrl->bmLayoutPerStream[3] =  0x0000;
+      /** @todo support UVC 1.5 */
     }
   }
 
@@ -512,6 +550,12 @@ uvc_error_t uvc_get_stream_ctrl_format_size(
           }
         } else {
           uint32_t interval_100ns = 10000000 / fps;
+          fprintf(stderr, "continuous: fps=%d interval=%u min=%u max=%u step=%u\n",
+            fps, interval_100ns,
+            frame->dwMinFrameInterval,
+            frame->dwMaxFrameInterval,
+            frame->dwFrameIntervalStep);
+
           uint32_t interval_offset = interval_100ns - frame->dwMinFrameInterval;
 
           if (interval_100ns >= frame->dwMinFrameInterval
@@ -746,6 +790,12 @@ void _uvc_process_payload(uvc_stream_handle_t *strmh, uint8_t *payload, size_t p
     size_t variable_offset = 2;
 
     header_info = payload[1];
+
+    header_info = payload[1];
+    fprintf(stderr, "payload_len=%zu header_len=%u fid=%d new_fid=%d eof=%d got=%zu\n",
+        payload_len, (unsigned)header_len,
+        strmh->fid, header_info & 1, (header_info >> 1) & 1,
+        strmh->got_bytes);
 
     if (header_info & 0x40) {
       UVC_DEBUG("bad packet: error bit set");
@@ -1219,7 +1269,12 @@ uvc_error_t uvc_stream_start(
       libusb_set_iso_packet_lengths(transfer, endpoint_bytes_per_packet);
     }
   } else {
-    for (transfer_id = 0; transfer_id < LIBUVC_NUM_TRANSFER_BUFS;
+    /* Bulk transfers: use fewer concurrent buffers than isochronous since bulk
+     * is reliable and self-pacing. This avoids exhausting the kernel's
+     * usbfs_memory_mb limit when dwMaxPayloadTransferSize is large (e.g. a
+     * full 1920x1080 YUYV frame ~4 MB). */
+    int bulk_transfer_count = LIBUVC_NUM_TRANSFER_BUFS < 3 ? LIBUVC_NUM_TRANSFER_BUFS : 3;
+    for (transfer_id = 0; transfer_id < bulk_transfer_count;
         ++transfer_id) {
       transfer = libusb_alloc_transfer(0);
       strmh->transfers[transfer_id] = transfer;
@@ -1245,6 +1300,8 @@ uvc_error_t uvc_stream_start(
 
   for (transfer_id = 0; transfer_id < LIBUVC_NUM_TRANSFER_BUFS;
       transfer_id++) {
+    if (!strmh->transfers[transfer_id])
+      break;
     ret = libusb_submit_transfer(strmh->transfers[transfer_id]);
     if (ret != UVC_SUCCESS) {
       UVC_DEBUG("libusb_submit_transfer failed: %d",ret);
@@ -1252,8 +1309,10 @@ uvc_error_t uvc_stream_start(
     }
   }
 
-  if ( ret != UVC_SUCCESS && transfer_id >= 0 ) {
+  if ( ret != UVC_SUCCESS ) {
     for ( ; transfer_id < LIBUVC_NUM_TRANSFER_BUFS; transfer_id++) {
+      if (!strmh->transfers[transfer_id])
+        break;
       free ( strmh->transfers[transfer_id]->buffer );
       libusb_free_transfer ( strmh->transfers[transfer_id]);
       strmh->transfers[transfer_id] = 0;

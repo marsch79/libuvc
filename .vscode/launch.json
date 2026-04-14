@@ -1,0 +1,51 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug libuvc example",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/../../uvc-example",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "miDebuggerPath": "/usr/bin/gdb",
+      "setupCommands": [
+        {
+          "description": "Enable pretty printing",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        }
+      ]
+    },
+    {
+      "name": "Debug libuvc test",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/uvc_test",
+      "args": [],
+      "stopAtEntry": true,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "externalConsole": false,
+      "MIMode": "gdb",
+      "miDebuggerPath": "/usr/bin/gdb",
+      "environment": [
+        {
+          "name": "DISPLAY",
+          "value": ":0"
+        }
+      ],
+      "setupCommands": [
+        {
+          "description": "Enable pretty printing",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        }
+      ]
+    }
+  ]
+}

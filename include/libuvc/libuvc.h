@@ -512,6 +512,12 @@ typedef struct uvc_stream_ctrl {
   uint8_t bPreferredVersion;
   uint8_t bMinVersion;
   uint8_t bMaxVersion;
+  uint8_t bUsage;
+  uint8_t bBitDepthLuma;
+  uint8_t bmSettings;
+  uint8_t bMaxNumberOfRefFramesPlus1;
+  uint16_t bmRateControlModes;
+  uint16_t bmLayoutPerStream[4];
   uint8_t bInterfaceNumber;
 } uvc_stream_ctrl_t;
 

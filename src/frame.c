@@ -175,6 +175,9 @@ uvc_error_t uvc_yuyv2rgb(uvc_frame_t *in, uvc_frame_t *out) {
   if (in->frame_format != UVC_FRAME_FORMAT_YUYV)
     return UVC_ERROR_INVALID_PARAM;
 
+  if (in->data_bytes < (size_t)(in->width * in->height * 2))
+    return UVC_ERROR_INVALID_PARAM;
+
   if (uvc_ensure_frame_size(out, in->width * in->height * 3) < 0)
     return UVC_ERROR_NO_MEM;
 
@@ -224,6 +227,9 @@ uvc_error_t uvc_yuyv2rgb(uvc_frame_t *in, uvc_frame_t *out) {
  */
 uvc_error_t uvc_yuyv2bgr(uvc_frame_t *in, uvc_frame_t *out) {
   if (in->frame_format != UVC_FRAME_FORMAT_YUYV)
+    return UVC_ERROR_INVALID_PARAM;
+
+  if (in->data_bytes < (size_t)(in->width * in->height * 2))
     return UVC_ERROR_INVALID_PARAM;
 
   if (uvc_ensure_frame_size(out, in->width * in->height * 3) < 0)
@@ -356,6 +362,9 @@ uvc_error_t uvc_uyvy2rgb(uvc_frame_t *in, uvc_frame_t *out) {
   if (in->frame_format != UVC_FRAME_FORMAT_UYVY)
     return UVC_ERROR_INVALID_PARAM;
 
+  if (in->data_bytes < (size_t)(in->width * in->height * 2))
+    return UVC_ERROR_INVALID_PARAM;
+
   if (uvc_ensure_frame_size(out, in->width * in->height * 3) < 0)
     return UVC_ERROR_NO_MEM;
 
@@ -404,6 +413,9 @@ uvc_error_t uvc_uyvy2rgb(uvc_frame_t *in, uvc_frame_t *out) {
  */
 uvc_error_t uvc_uyvy2bgr(uvc_frame_t *in, uvc_frame_t *out) {
   if (in->frame_format != UVC_FRAME_FORMAT_UYVY)
+    return UVC_ERROR_INVALID_PARAM;
+
+  if (in->data_bytes < (size_t)(in->width * in->height * 2))
     return UVC_ERROR_INVALID_PARAM;
 
   if (uvc_ensure_frame_size(out, in->width * in->height * 3) < 0)
