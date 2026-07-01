@@ -1364,7 +1364,7 @@ void *_uvc_user_caller(void *arg) {
       pthread_cond_wait(&strmh->cb_cond, &strmh->cb_mutex);
     }
 
-    if (!strmh->running) {
+    if (!strmh->running && last_seq == strmh->hold_seq) {
       pthread_mutex_unlock(&strmh->cb_mutex);
       break;
     }

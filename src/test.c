@@ -33,16 +33,43 @@
 *********************************************************************/
 #include <stdio.h>
 #include <unistd.h>
+#include <stdint.h>
+#include <signal.h>
+#include <sys/select.h>
 #include <opencv2/highgui/highgui_c.h>
 
 #include "libuvc/libuvc.h"
+
+#define UVCTEST_SAVE_RAW15
+
+#ifdef UVCTEST_SAVE_RAW15
+  FILE *fp = NULL;
+#endif
 
 void cb(uvc_frame_t *frame, void *ptr) {
   uvc_frame_t *bgr;
   uvc_error_t ret;
   IplImage* cvImg;
+  printf("callback! length = %zu, ptr = %p\n", frame->data_bytes, ptr);
 
-  printf("callback! length = %u, ptr = %d\n", frame->data_bytes, (int) ptr);
+  /* Optional: save raw 15-bit grayscale values to gray145raw file.
+   * Enable by defining UVCTEST_SAVE_RAW14 before compilation.
+   * Each pixel is written as a 16-bit little-endian value with upper 2 bits masked off.
+   */
+
+#ifdef UVCTEST_SAVE_RAW15
+  if (frame->frame_format == UVC_FRAME_FORMAT_GRAY16) {
+    uint8_t *p = frame->data;
+    size_t pixels = (size_t)frame->width * (size_t)frame->height;
+    for (size_t i = 0; i < pixels; ++i) {
+      uint16_t v = (uint16_t)(p[0] | (p[1] << 8));
+      v &= 0x7FFF; /* keep only lower 15 bits */
+      uint8_t out[2] = { (uint8_t)(v & 0xFF), (uint8_t)(v >> 8) };
+      if (fp) fwrite(out, 1, 2, fp);
+      p += 2;
+    }
+  }
+#endif
 
   bgr = uvc_allocate_frame(frame->width * frame->height * 3);
   if (!bgr) {
@@ -62,7 +89,7 @@ void cb(uvc_frame_t *frame, void *ptr) {
       IPL_DEPTH_8U,
       3);
 
-  cvSetData(cvImg, bgr->data, bgr->width * 3); 
+  cvSetData(cvImg, bgr->data, bgr->step); 
 
   cvNamedWindow("Test", CV_WINDOW_AUTOSIZE);
   cvShowImage("Test", cvImg);
@@ -80,6 +107,16 @@ int main(int argc, char **argv) {
   uvc_device_handle_t *devh;
   uvc_stream_ctrl_t ctrl;
 
+#ifdef UVCTEST_SAVE_RAW15
+  char name[] = "gray15.raw";
+  fp = fopen(name, "wb");
+  if (!fp) {
+    fprintf(stderr, "warning: failed to open %s for writing\n", name);
+  } else {
+    printf("store raw file %s\n", name);
+  }
+#endif
+
   res = uvc_init(&ctx, NULL);
 
   if (res < 0) {
@@ -91,7 +128,7 @@ int main(int argc, char **argv) {
 
   res = uvc_find_device(
       ctx, &dev,
-      0, 0, NULL);
+      0x2ac1, 0xfd00, NULL);
 
   if (res < 0) {
     uvc_perror(res, "uvc_find_device");
@@ -108,7 +145,8 @@ int main(int argc, char **argv) {
       uvc_print_diag(devh, stderr);
 
       res = uvc_get_stream_ctrl_format_size(
-          devh, &ctrl, UVC_FRAME_FORMAT_YUYV, 1920, 1080, 5
+          devh, &ctrl, UVC_FRAME_FORMAT_GRAY16, 328, 248, 105
+          //devh, &ctrl, UVC_FRAME_FORMAT_YUYV, 1920, 1080, 5          
       );
 
       uvc_print_stream_ctrl(&ctrl, stderr);
@@ -121,21 +159,18 @@ int main(int argc, char **argv) {
         if (res < 0) {
           uvc_perror(res, "start_streaming");
         } else {
-          puts("Streaming for 10 seconds...");
-//          uvc_error_t resAEMODE = uvc_set_ae_mode(devh, 1);
-//          uvc_perror(resAEMODE, "set_ae_mode");
-//          int i;
-//          for (i = 1; i <= 10; i++) {
-            /* uvc_error_t resPT = uvc_set_pantilt_abs(devh, i * 20 * 3600, 0); */
-            /* uvc_perror(resPT, "set_pt_abs"); */
-//            uvc_error_t resEXP = uvc_set_exposure_abs(devh, 20 + i * 5);
-//            uvc_perror(resEXP, "set_exp_abs");
-            
-//            sleep(1);
-//          }
-          sleep(10);
+          puts("Streaming started; press Enter to stop...");
+
+          fd_set readfds;
+          FD_ZERO(&readfds);
+          FD_SET(STDIN_FILENO, &readfds);
+
+          if (select(STDIN_FILENO + 1, &readfds, NULL, NULL, NULL) < 0) {
+            perror("select");
+          }
+
           uvc_stop_streaming(devh);
-	  puts("Done streaming.");
+          puts("Done streaming.");
         }
       }
 
@@ -148,6 +183,10 @@ int main(int argc, char **argv) {
 
   uvc_exit(ctx);
   puts("UVC exited");
+
+#ifdef UVCTEST_SAVE_RAW15
+  fclose(fp);
+#endif
 
   return 0;
 }

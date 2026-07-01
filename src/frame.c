@@ -444,6 +444,129 @@ uvc_error_t uvc_uyvy2bgr(uvc_frame_t *in, uvc_frame_t *out) {
   return UVC_SUCCESS;
 }
 
+/** @brief Thermal colormap LUT - runtime generated 256 × BGR colors
+ * Maps from cool (blue) through cyan, green, yellow to hot (red)
+ * Generated on first use; entries are stored as [B, G, R, B, G, R, ...]
+ */
+static uint8_t thermal_colormap[256 * 3];
+static int thermal_colormap_inited = 0;
+
+static void build_thermal_colormap(void) {
+  if (thermal_colormap_inited)
+    return;
+
+  /* Define color stops (position 0..255) */
+  enum { stops = 8 };
+  const uint8_t stop_pos[stops] = {0, 48, 96, 128, 160, 192, 224, 255};
+  const uint8_t stop_col[stops][3] = {
+    {0, 0, 64},    /* deep blue */
+    {0, 0, 255},   /* blue */
+    {0, 255, 255}, /* cyan */
+    {0, 255, 0},   /* green */
+    {255, 255, 0}, /* yellow */
+    {255, 128, 0}, /* orange */
+    {255, 0, 0},   /* red */
+    {255, 255, 255}/* white */
+  };
+
+  for (int i = 0; i < 256; ++i) {
+    /* find segment */
+    int seg = 0;
+    while (seg < stops - 1 && i > stop_pos[seg + 1])
+      ++seg;
+
+    int p0 = stop_pos[seg];
+    int p1 = stop_pos[(seg + 1) < stops ? (seg + 1) : seg];
+    int span = p1 - p0;
+    int t = (span == 0) ? 0 : (i - p0);
+
+    for (int c = 0; c < 3; ++c) {
+      int v0 = stop_col[seg][c];
+      int v1 = stop_col[(seg + 1) < stops ? (seg + 1) : seg][c];
+      int val;
+      if (span == 0)
+        val = v0;
+      else
+        val = v0 + (t * (v1 - v0) + (span / 2)) / span; /* linear interp */
+      if (val < 0) val = 0;
+      if (val > 255) val = 255;
+      thermal_colormap[i * 3 + c] = (uint8_t)val;
+    }
+  }
+
+  thermal_colormap_inited = 1;
+}
+
+/** @brief Convert a frame from 14-bit grayscale (in 16-bit container) to BGR
+ * @ingroup frame
+ *
+ * Converts thermal imaging data (14-bit grayscale in lower bits of 16-bit words)
+ * to 24-bit BGR color using a thermal colormap for display. The upper 2 bits are ignored.
+ *
+ * @param in 16-bit grayscale frame (GRAY16 format)
+ * @param out BGR frame
+ */
+uvc_error_t uvc_gray162bgr(uvc_frame_t *in, uvc_frame_t *out) {
+  if (in->frame_format != UVC_FRAME_FORMAT_GRAY16)
+    return UVC_ERROR_INVALID_PARAM;
+
+  if (in->data_bytes < (size_t)(in->width * in->height * 2))
+    return UVC_ERROR_INVALID_PARAM;
+
+  /* Output is 3 bytes per pixel (BGR) */
+  if (uvc_ensure_frame_size(out, in->width * in->height * 3) < 0)
+    return UVC_ERROR_NO_MEM;
+
+  out->width = in->width;
+  out->height = in->height;
+  out->frame_format = UVC_FRAME_FORMAT_BGR;
+  out->step = in->width * 3;
+  out->sequence = in->sequence;
+  out->capture_time = in->capture_time;
+  out->capture_time_finished = in->capture_time_finished;
+  out->source = in->source;
+
+  uint8_t *py16 = in->data;
+  uint8_t *pbgr = out->data;
+  uint8_t *pbgr_end = pbgr + out->data_bytes;
+
+  build_thermal_colormap();
+  while (pbgr < pbgr_end) {
+    /* Process 1 pixel at a time */
+    /* Read 16-bit little-endian grayscale value */
+    uint16_t gray16 = py16[0] | (py16[1] << 8);
+    
+    /* Extract 14-bit grayscale data (mask off upper 2 bits) */
+    uint16_t gray15 = gray16 & 0x7FFF;
+
+    /* Map 14-bit range [MAP_MIN, MAP_MAX] to colormap index 0..255
+     * Values below MAP_MIN -> coldest (0), above MAP_MAX -> hottest (255).
+     */
+    const uint16_t MAP_MIN = 4000;
+    const uint16_t MAP_MAX = 7000;
+    uint8_t gray8;
+    if (gray15 <= MAP_MIN) {
+      gray8 = 0;
+    } else if (gray15 >= MAP_MAX) {
+      gray8 = 255;
+    } else {
+      /* scale with integer arithmetic */
+      gray8 = (uint8_t)(((uint32_t)(gray15 - MAP_MIN) * 255u) / (MAP_MAX - MAP_MIN));
+    }
+
+    /* Look up color in thermal colormap */
+    uint32_t lut_idx = gray8 * 3;
+    pbgr[0] = thermal_colormap[lut_idx];      /* B */
+    pbgr[1] = thermal_colormap[lut_idx + 1];  /* G */
+    pbgr[2] = thermal_colormap[lut_idx + 2];  /* R */
+    
+    pbgr += 3;
+    py16 += 2;
+  }
+
+  return UVC_SUCCESS;
+}
+
 /** @brief Convert a frame to RGB
  * @ingroup frame
  *
@@ -481,6 +604,8 @@ uvc_error_t uvc_any2bgr(uvc_frame_t *in, uvc_frame_t *out) {
       return uvc_uyvy2bgr(in, out);
     case UVC_FRAME_FORMAT_BGR:
       return uvc_duplicate_frame(in, out);
+    case UVC_FRAME_FORMAT_GRAY16:
+      return uvc_gray162bgr(in, out);
     default:
       return UVC_ERROR_NOT_SUPPORTED;
   }
